@@ -1,0 +1,15 @@
+streamlit
+openai-whisper
+opencv-python
+numpy
+Pillow
+torch
+torchaudio
+ffmpeg-python
+transformers
+yt-dlp
+bitsandbytes
+matplotlib
+torchvision
+einops
+transformers_stream_generator
