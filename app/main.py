@@ -5,7 +5,25 @@ from video_utils import save_uploaded_video, extract_frames_around
 from transcript_utils import WhisperModel, get_transcript_around, get_transcript_full, summarize_transcript
 from config import VIDEO_PATH, FRAME_DIR
 from llm_utils import get_response
+import re
 
+def parse_timestamp(input_str):
+    """Convert HH:MM:SS, MM:SS or SS to seconds"""
+    input_str = input_str.strip()
+    parts = input_str.split(":")
+    try:
+        if len(parts) == 3:
+            h, m, s = map(int, parts)
+            return h * 3600 + m * 60 + s
+        elif len(parts) == 2:
+            m, s = map(int, parts)
+            return m * 60 + s
+        elif len(parts) == 1:
+            return int(parts[0])
+        else:
+            return None
+    except ValueError:
+        return None
 st.set_page_config(page_title="Video QA App", layout="centered")
 st.title("🎥 Ask Questions on Video")
 
@@ -17,9 +35,17 @@ if video_file:
     st.video(str(VIDEO_PATH))
 
     # Step 2: Ask for timestamp
-    manual_time = st.number_input("⏸️ Enter the timestamp you paused at (in seconds):", step=1.0)
+    timestamp_input = st.text_input("⏱️ Enter timestamp (HH:MM:SS, MM:SS, or SS):")
 
-    if manual_time:
+
+    manual_time = 0
+    if timestamp_input:
+        seconds = parse_timestamp(timestamp_input)
+        if seconds is None:
+            st.error("❌ Invalid timestamp format. Try HH:MM:SS, MM:SS, or just seconds.")
+        else:
+            manual_time = seconds
+        st.success(f"✅ Parsed timestamp: {manual_time} seconds")
         # Step 3: Transcript
         with st.spinner("🔍 Transcribing video..."):
             whisper_model = WhisperModel()
@@ -38,9 +64,9 @@ if video_file:
         with st.spinner("🖼️ Extracting frames..."):
             frames = extract_frames_around(VIDEO_PATH, manual_time, FRAME_DIR)
 
-        st.markdown("### 🖼️ Sample Frames")
-        for frame in frames:
-            st.image(str(frame), use_container_width=True)
+        # st.markdown("### 🖼️ Sample Frames")
+        # for frame in frames:
+        #     st.image(str(frame), use_container_width=True)
 
         # Initialize session state
         if "conversation" not in st.session_state:

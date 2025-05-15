@@ -8,7 +8,6 @@ torchaudio
 ffmpeg-python
 transformers
 yt-dlp
-bitsandbytes
 matplotlib
 torchvision
 summa
