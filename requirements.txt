@@ -11,5 +11,4 @@ yt-dlp
 bitsandbytes
 matplotlib
 torchvision
-einops
-transformers_stream_generator
+summa

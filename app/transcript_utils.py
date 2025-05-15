@@ -1,6 +1,7 @@
 import whisper
 from typing import List, Dict
 from singleton_class import Singleton
+from summa.summarizer import summarize
 
 class WhisperModel(Singleton):
     model = None
@@ -23,7 +24,7 @@ class WhisperModel(Singleton):
 
 WhisperModel.load_model()
 
-def get_transcript_around(segments: List[Dict], timestamp: float, window: int = 5) -> str:
+def get_transcript_around(segments: List[Dict], timestamp: float, window: int = 60) -> str:
     """
     Extract transcript within ±`window` seconds around the given timestamp.
     """
@@ -32,3 +33,18 @@ def get_transcript_around(segments: List[Dict], timestamp: float, window: int = 
         if abs(seg['start'] - timestamp) <= window or abs(seg['end'] - timestamp) <= window:
             context.append(seg['text'])
     return ' '.join(context)
+
+def get_transcript_full(segments: List[Dict]) -> str:
+    """
+    Extract full transcript from segments.
+    """
+    return ' '.join([seg['text'] for seg in segments])
+
+def summarize_transcript(text, word_limit=1000):
+    """
+    Summarize transcript using TextRank (summa).
+    :param text: full transcript
+    :param word_limit: maximum words in summary
+    :return: summary string
+    """
+    return summarize(text, words=word_limit, split=False)

@@ -48,5 +48,5 @@ def extract_frames_around(video_path: Path, timestamp: float, frame_dir: Path, w
         current += 1.0 / fps
 
     cap.release()
-    return frame_paths
+    return [frame_paths[4]]
 

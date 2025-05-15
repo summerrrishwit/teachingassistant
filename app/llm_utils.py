@@ -1,49 +1,41 @@
 import os
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor, BitsAndBytesConfig
-from config import PROMPT, FRAME_DIR
-from singleton_class import Singleton
-os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
-
-class QwenModel(Singleton):
-    model = None
-    tokenizer = None
-    
-    def __init__(self):
-        pass
-
-    @classmethod
-    def load_model(cls):
-        # Load model with 4-bit quantization
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch.float16
-        )
-        cls.model = AutoModelForCausalLM.from_pretrained(
-            "Qwen/Qwen-VL-Chat",
-            trust_remote_code=True,
-        )
-        cls.model.to("mps")
-        cls.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen-VL-Chat", trust_remote_code=True)
+from config import FRAME_DIR, prompt_dict
+import base64
+import ollama
 
 
-def get_response(text, question):
+def image_to_base64(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode("utf-8")
+
+def get_response(text, question, full_transcript, prompt_key, summarized_transcript):
     # Prepare the prompt
-    prompt = PROMPT.format(text=text, question=question)
-    QwenModel.load_model()
+    # try:
+    #     relevant_chunk = query_faiss_index(question, top_k=1)[0]
+    # except Exception as e:
+    #     relevant_chunk = full_transcript
+    prompt = prompt_dict[prompt_key]
 
     prompt_inputs = []
     for path in os.listdir(FRAME_DIR):
         if path.endswith(".jpg"):
             image_path = os.path.join(FRAME_DIR, path)
-            prompt_inputs.append({"image": image_path})
+            prompt_inputs.append(image_to_base64(image_path))
 
-    prompt_inputs.append({'text': prompt.format(text=text, question=question)})  
-    # print(prompt_inputs)       
-    query = QwenModel.tokenizer.from_list_format(prompt_inputs)
+    if prompt_key == "video_qa":
+        prompt = prompt.format(text=text, question=question, global_context=summarized_transcript)
+    elif prompt_key == "bullet_points":
+        # Use the full transcript for bullet points
+        prompt = prompt.format(text=full_transcript)
+    elif prompt_key == "qa_style":
+        # Use the full transcript for question-answer pairs
+        prompt = prompt.format(text=full_transcript)
+
+    response = ollama.generate(
+        model="gemma3:4b",
+        prompt = prompt_key,
+        images = prompt_inputs)
     
-    response, history = QwenModel.model.chat(QwenModel.tokenizer, query=query, history=None)
+    answer = response['response'].strip()
     
-    return response
+    return answer
