@@ -3,6 +3,7 @@ from enum import Enum
 
 VIDEO_PATH = "runtime/uploaded_video.mp4"
 FRAME_DIR = "runtime/frames/"
+MODEL = "gemma3:4b"
 os.makedirs(FRAME_DIR, exist_ok=True)
 
 PROMPT_QA = """You are a helpful teaching assistant. You will be provided with:

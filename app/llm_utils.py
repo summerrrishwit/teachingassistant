@@ -1,7 +1,8 @@
 import os
-from config import FRAME_DIR, prompt_dict
+from config import FRAME_DIR, prompt_dict, MODEL
 import base64
 import ollama
+import streamlit as st
 
 
 def image_to_base64(image_path):
@@ -31,11 +32,38 @@ def get_response(text, question, full_transcript, prompt_key, summarized_transcr
         # Use the full transcript for question-answer pairs
         prompt = prompt.format(text=full_transcript)
 
-    response = ollama.generate(
-        model="gemma3:4b",
-        prompt = prompt_key,
-        images = prompt_inputs)
-    
-    answer = response['response'].strip()
-    
-    return answer
+    # response = ollama.generate(
+    #     model="gemma3:4b",
+    #     prompt = prompt_key,
+    #     images = prompt_inputs)
+    full_answer = ""
+    placeholder = st.empty()  # This will hold the streaming text
+    try:
+        response = ollama.chat(
+            model=MODEL,
+            messages=[
+                {"role": "user", "content": prompt, 'images': prompt_inputs},
+            ],
+            stream=True
+        )
+
+        for chunk in response:
+            new_text = chunk["message"]["content"]
+            full_answer += new_text
+            placeholder.markdown(full_answer + "▌")  # live typing effect
+
+        placeholder.markdown(full_answer)  # final display without cursor
+    except Exception as e:
+        st.warning(f"⚠️ Streaming failed. Falling back to generate(). Reason: {e}")
+        try:
+            result = ollama.generate(
+                model=MODEL,
+                prompt=prompt,
+                images=prompt_inputs or []
+            )
+            full_answer = result["response"]
+            placeholder.markdown(full_answer)
+        except Exception as gen_error:
+            full_answer = f"❌ Both streaming and fallback generation failed: {gen_error}"
+            placeholder.error(full_answer)
+    return full_answer

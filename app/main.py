@@ -90,12 +90,13 @@ if video_file:
                         st.session_state.conversation.append((question, answer))
                         st.session_state.current_question = ""  # reset input
 
-        # Show conversation history
         if st.session_state.conversation:
-            st.markdown("### 🧠 Conversation")
-            for i, (q, a) in enumerate(st.session_state.conversation):
-                st.markdown(f"**Q{i+1}:** {q}")
-                st.markdown(f"**A{i+1}:** {a}")
+            if st.toggle("🧠 Show Conversation History"):
+                st.markdown("### 💬 Conversation")
+                for i, (q, a) in enumerate(st.session_state.conversation):
+                    with st.expander(f"Q{i+1}: {q}"):
+                        st.markdown(f"**Q:** {q}")
+                        st.markdown(f"**A:** {a}")
 
         # Satisfied button
         if not st.session_state.satisfied:
@@ -133,6 +134,6 @@ if video_file:
                     st.success("📝 Notes generated!")
 
         # Show generated notes
-        if "notes_generated" in st.session_state:
-            st.markdown("### 📌 Generated Notes")
-            st.write(st.session_state.notes_generated)
+        # if "notes_generated" in st.session_state:
+        #     st.markdown("### 📌 Generated Notes")
+        #     # st.write(st.session_state.notes_generated)
