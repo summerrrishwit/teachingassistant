@@ -11,3 +11,10 @@ yt-dlp
 matplotlib
 torchvision
 summa
+langchain
+langchain-core
+langchain-community
+faiss-cpu
+sentence-transformers
+ollama
+langchain-text-splitters

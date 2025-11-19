@@ -50,3 +50,47 @@ def extract_frames_around(video_path: Path, timestamp: float, frame_dir: Path, w
     cap.release()
     return [frame_paths[4]]
 
+def extract_key_frames_for_summary(video_path: Path, frame_dir: Path, num_frames: int = 5) -> List[Path]:
+    """
+    Extract key frames from the entire video for comprehensive analysis.
+    
+    Args:
+        video_path: Path to input video
+        frame_dir: Output folder for frames
+        num_frames: Number of key frames to extract
+        
+    Returns:
+        List of saved frame paths
+    """
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError("Could not open video")
+    
+    # Get video properties
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    duration = total_frames / fps
+    
+    frame_paths = []
+    
+    # Clear existing frames
+    for file in os.listdir(frame_dir):
+        if file.endswith('.jpg'):
+            os.remove(os.path.join(frame_dir, file))
+    
+    # Extract frames at regular intervals
+    for i in range(num_frames):
+        frame_number = int((i / (num_frames - 1)) * (total_frames - 1))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        success, frame = cap.read()
+        
+        if success:
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_img = Image.fromarray(frame_rgb)
+            frame_path = f"{frame_dir}/summary_frame_{i}.jpg"
+            frame_img.save(frame_path, "JPEG")
+            frame_paths.append(frame_path)
+    
+    cap.release()
+    return frame_paths
+

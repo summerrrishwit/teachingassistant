@@ -94,20 +94,3 @@ streamlit run app/main.py
 * ✅ Export notes to PDF/Markdown
 * 🔍 Visual timeline navigation
 * 🔁 Persistent RAG index across sessions
-
----
-
-## 🙌 Credits
-
-Built using:
-
-* [Streamlit](https://streamlit.io/)
-* [Ollama](https://ollama.com/)
-* [Whisper](https://github.com/openai/whisper)
-* [SentenceTransformers](https://www.sbert.net/)
-
----
-
-## 📬 Feedback / Contributions
-
-Feel free to open issues or pull requests — contributions welcome!
