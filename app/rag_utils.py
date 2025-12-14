@@ -1,18 +1,23 @@
-import os
 from pathlib import Path
-from typing import List, Dict, Optional
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
+from typing import Any, Dict, List, Optional, Sequence
 
-from langchain_core.documents import Document
 import streamlit as st
-from config import VIDEO_PATH, FRAME_DIR
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from core import (
+    PathConstants,
+    RAGConstants,
+    default_logger,
+)
 
 
 class VideoRAGSystem:
     """基于LangChain的视频RAG系统"""
     
-    def __init__(self, embedding_model):
+    def __init__(self, embedding_model: Embeddings):
         """
         初始化RAG系统
         :param embedding_model: 用于向量化的模型实例
@@ -20,12 +25,13 @@ class VideoRAGSystem:
         self.embedding_model = embedding_model
         self.vectorstore: Optional[FAISS] = None
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,  # 每个chunk的字符数
-            chunk_overlap=50,  # chunk之间的重叠
+            chunk_size=RAGConstants.DEFAULT_CHUNK_SIZE,
+            chunk_overlap=RAGConstants.DEFAULT_CHUNK_OVERLAP,
             length_function=len,
             separators=["\n\n", "\n", "。", "，", " ", ""]
         )
-        self.index_path = "runtime/faiss_index"
+        self.index_path = PathConstants.FAISS_INDEX_DIR
+        self.logger = default_logger
     
     def create_documents_from_segments(self, segments: List[Dict]) -> List[Document]:
         """
@@ -46,7 +52,11 @@ class VideoRAGSystem:
             documents.append(doc)
         return documents
     
-    def build_vector_store(self, segments: List[Dict], video_id: str = None):
+    def build_vector_store(
+        self,
+        segments: List[Dict],
+        video_id: Optional[str] = None
+    ) -> None:
         """
         构建向量存储
         
@@ -57,8 +67,6 @@ class VideoRAGSystem:
         Raises:
             ValueError: 如果segments为空
         """
-        from pathlib import Path
-        
         if not segments:
             raise ValueError("无法构建向量索引：转录片段为空")
         
@@ -82,28 +90,38 @@ class VideoRAGSystem:
         )
         
         # 保存索引
-        if video_id:
-            index_path = f"{self.index_path}_{video_id}"
-        else:
-            index_path = self.index_path
-        
-        # 确保目录存在
-        index_dir = Path(index_path)
+        index_dir = self._get_index_path(video_id)
         index_dir.mkdir(parents=True, exist_ok=True)
         
         # 保存索引
-        self.vectorstore.save_local(str(index_path))
+        self.vectorstore.save_local(str(index_dir))
+        self.logger.info("向量索引已构建: %s (segments=%s)", index_dir, len(split_docs))
         
         # 验证保存是否成功
         faiss_file = index_dir / "index.faiss"
         pkl_file = index_dir / "index.pkl"
         if faiss_file.exists() and pkl_file.exists():
-            st.success(f"✅ 向量索引已构建并保存到 {index_path}")
+            st.success(f"✅ 向量索引已构建并保存到 {index_dir}")
+            self.logger.info("向量索引已验证: %s", index_dir)
         else:
-            st.warning(f"⚠️ 向量索引构建完成，但保存验证失败: {index_path}")
+            st.warning(f"⚠️ 向量索引构建完成，但保存验证失败: {index_dir}")
+            self.logger.warning("向量索引构建完成，但保存验证失败: %s", index_dir)
     
-    def _merge_short_segments(self, documents: List[Document], min_length: int = 50) -> List[Document]:
-        """合并过短的片段"""
+    def _merge_short_segments(
+        self,
+        documents: List[Document],
+        min_length: Optional[int] = None
+    ) -> List[Document]:
+        """
+        合并过短的片段
+        
+        Args:
+            documents: 文档列表
+            min_length: 最小长度阈值，默认使用 RAGConstants.MIN_SEGMENT_LENGTH
+        """
+        if min_length is None:
+            min_length = RAGConstants.MIN_SEGMENT_LENGTH
+        
         merged = []
         current_doc = None
         
@@ -121,7 +139,21 @@ class VideoRAGSystem:
             merged.append(current_doc)
         return merged
     
-    def load_vector_store(self, video_id: str = None):
+    def _get_index_path(self, video_id: Optional[str] = None) -> Path:
+        """获取索引目录路径"""
+        if video_id:
+            return Path(f"{self.index_path}_{video_id}")
+        return Path(self.index_path)
+
+    def _is_index_valid(self, index_dir: Path) -> bool:
+        """检查索引目录是否有效"""
+        if not index_dir.exists() or not index_dir.is_dir():
+            return False
+        faiss_file = index_dir / "index.faiss"
+        pkl_file = index_dir / "index.pkl"
+        return faiss_file.exists() and pkl_file.exists()
+
+    def load_vector_store(self, video_id: Optional[str] = None) -> bool:
         """
         加载已保存的向量存储
         
@@ -131,24 +163,10 @@ class VideoRAGSystem:
         Returns:
             bool: 是否成功加载
         """
-        from pathlib import Path
+        index_dir = self._get_index_path(video_id)
+        index_path = str(index_dir)
         
-        # 确定索引路径
-        if video_id:
-            index_path = f"{self.index_path}_{video_id}"
-        else:
-            index_path = self.index_path
-        
-        # 检查索引文件是否存在
-        index_dir = Path(index_path)
-        faiss_file = index_dir / "index.faiss"
-        pkl_file = index_dir / "index.pkl"
-        
-        if not index_dir.exists():
-            return False
-        
-        if not faiss_file.exists() or not pkl_file.exists():
-            # 索引文件不完整，返回False以便重新构建
+        if not self._is_index_valid(index_dir):
             return False
         
         try:
@@ -157,6 +175,7 @@ class VideoRAGSystem:
                 self.embedding_model,
                 allow_dangerous_deserialization=True
             )
+            self.logger.info("成功加载向量索引: %s", index_path)
             return True
         except FileNotFoundError:
             # 文件不存在，这是正常情况，不需要警告
@@ -164,52 +183,80 @@ class VideoRAGSystem:
         except Exception as e:
             # 其他错误（如文件损坏），记录警告
             st.warning(f"⚠️ 无法加载向量索引: {e}")
+            self.logger.warning("无法加载向量索引: %s", e, exc_info=True)
             return False
     
     def retrieve_relevant_context(
-        self, 
-        query: str, 
-        top_k: int = 3,
-        score_threshold: float = 1.5  # FAISS使用的是L2距离，值越大表示越不相似
-    ) -> List[Dict]:
+        self,
+        query: str,
+        top_k: int = RAGConstants.DEFAULT_TOP_K,
+        score_threshold: float = RAGConstants.DEFAULT_SCORE_THRESHOLD,
+        use_mmr: bool = False,
+        fetch_k: int = 15,
+        lambda_mult: float = 0.5,
+        use_hybrid: bool = False
+    ) -> List[Dict[str, Any]]:
         """
         检索相关上下文
         :param query: 查询问题
         :param top_k: 返回top-k个相关片段
         :param score_threshold: 相似度阈值（L2距离，越小越相似）
+        :param use_mmr: 是否启用 MMR 检索以提升多样性
+        :param fetch_k: MMR 预检索数量
+        :param lambda_mult: MMR 多样性参数
+        :param use_hybrid: 是否混合语义+关键词检索
         :return: 相关上下文列表，包含文本、时间戳等信息
         """
         if self.vectorstore is None:
             return []
         
-        # 使用相似度搜索
-        docs_with_scores = self.vectorstore.similarity_search_with_score(
-            query, 
-            k=top_k
-        )
+        docs_with_scores: Sequence[Any] = []
+
+        if use_mmr:
+            try:
+                mmr_docs = self.vectorstore.max_marginal_relevance_search(
+                    query,
+                    k=top_k,
+                    fetch_k=fetch_k,
+                    lambda_mult=lambda_mult,
+                )
+                docs_with_scores = [(doc, 0.0) for doc in mmr_docs]
+            except Exception as e:
+                self.logger.warning("MMR 检索失败，回退普通检索: %s", e)
+
+        if not docs_with_scores:
+            docs_with_scores = self.vectorstore.similarity_search_with_score(
+                query,
+                k=top_k
+            )
+
+        keyword_docs: List[Document] = []
+        if use_hybrid:
+            keyword_docs = self._keyword_search(query, top_k=top_k)
         
         # 过滤高分结果（L2距离，越小越好）并格式化
         contexts = []
         for doc, score in docs_with_scores:
-            # 转换L2距离为相似度分数（0-1之间，越大越相似）
             similarity_score = 1 / (1 + score) if score > 0 else 1.0
-            if score <= score_threshold:  # L2距离阈值
-                contexts.append({
-                    'text': doc.page_content,
-                    'start_time': doc.metadata.get('start_time', 0),
-                    'end_time': doc.metadata.get('end_time', 0),
-                    'timestamp': doc.metadata.get('timestamp', ''),
-                    'score': float(similarity_score)  # 相似度分数
-                })
-        
-        return contexts
+            if score <= score_threshold or use_mmr:
+                contexts.append(self._doc_to_context(doc, similarity_score))
+
+        if keyword_docs:
+            keyword_contexts = [
+                self._doc_to_context(doc, score=0.0) for doc in keyword_docs
+            ]
+            contexts.extend(keyword_contexts)
+
+        # 去重并按分数排序
+        return self._dedup_contexts(contexts)[:top_k]
     
     def retrieve_around_timestamp(
-        self, 
-        timestamp: float, 
+        self,
+        timestamp: float,
         window: int = 5,
-        query: str = None
-    ) -> Dict:
+        query: Optional[str] = None,
+        top_k: int = RAGConstants.DEFAULT_TOP_K
+    ) -> Dict[str, Any]:
         """
         结合时间戳和语义检索
         :param timestamp: 目标时间戳
@@ -218,11 +265,20 @@ class VideoRAGSystem:
         :return: 相关上下文
         """
         if self.vectorstore is None:
-            return {}
+            return {
+                'text': '',
+                'contexts': [],
+                'retrieval_type': 'no_index'
+            }
         
         # 如果提供了查询，先进行语义检索
         if query:
-            semantic_results = self.retrieve_relevant_context(query, top_k=5)
+            semantic_results = self.retrieve_relevant_context(
+                query,
+                top_k=max(top_k, 5),
+                use_mmr=True,
+                use_hybrid=True
+            )
             # 过滤出时间戳附近的片段
             time_filtered = [
                 ctx for ctx in semantic_results
@@ -232,19 +288,31 @@ class VideoRAGSystem:
                 return {
                     'text': ' '.join([ctx['text'] for ctx in time_filtered]),
                     'contexts': time_filtered,
-                    'retrieval_type': 'semantic_temporal'
+                    'retrieval_type': 'semantic_temporal',
+                    'timestamp': timestamp,
+                    'window': window
                 }
-        
-        # 否则，直接从向量存储中查找时间戳附近的文档
-        # 这里需要遍历所有文档（可以优化为基于时间戳的索引）
-        # 简化实现：返回空，让上层使用 transcript_utils 的功能
+
+        # 时间窗口检索：从 docstore 过滤靠近时间戳的文档
+        nearby_contexts = self._retrieve_by_time_window(timestamp, window, limit=top_k)
+        if nearby_contexts:
+            return {
+                'text': ' '.join([ctx['text'] for ctx in nearby_contexts]),
+                'contexts': nearby_contexts,
+                'retrieval_type': 'temporal_only',
+                'timestamp': timestamp,
+                'window': window
+            }
+
+        # 回退：返回空结果，但标记原因
         return {
             'text': '',
             'contexts': [],
-            'retrieval_type': 'temporal_only'
+            'retrieval_type': 'temporal_only',
+            'note': '未找到时间窗口内的片段'
         }
     
-    def cleanup_invalid_indices(self, keep_signatures: List[str] = None):
+    def cleanup_invalid_indices(self, keep_signatures: Optional[List[str]] = None):
         """
         清理无效或过期的索引文件
         
@@ -260,21 +328,18 @@ class VideoRAGSystem:
                 continue
             
             # 检查索引文件是否完整
-            faiss_file = index_dir / "index.faiss"
-            pkl_file = index_dir / "index.pkl"
-            
-            # 如果文件不完整，删除目录
-            if not faiss_file.exists() or not pkl_file.exists():
+            if not self._is_index_valid(index_dir):
                 try:
                     import shutil
                     shutil.rmtree(index_dir)
                     cleaned_count += 1
+                    self.logger.info("已删除无效索引: %s", index_dir)
                 except Exception as e:
                     st.warning(f"⚠️ 无法删除无效索引 {index_dir}: {e}")
+                    self.logger.warning("无法删除无效索引 %s: %s", index_dir, e, exc_info=True)
             
             # 如果指定了要保留的签名，检查是否应该删除
             elif keep_signatures:
-                # 从目录名提取签名
                 dir_name = index_dir.name
                 if dir_name.startswith("faiss_index_"):
                     signature = dir_name.replace("faiss_index_", "")
@@ -283,9 +348,72 @@ class VideoRAGSystem:
                             import shutil
                             shutil.rmtree(index_dir)
                             cleaned_count += 1
+                            self.logger.info("已删除过期索引: %s", index_dir)
                         except Exception as e:
                             st.warning(f"⚠️ 无法删除过期索引 {index_dir}: {e}")
+                            self.logger.warning("无法删除过期索引 %s: %s", index_dir, e, exc_info=True)
         
         if cleaned_count > 0:
             st.info(f"🧹 已清理 {cleaned_count} 个无效索引")
+    
+    def _doc_to_context(self, doc: Document, score: float) -> Dict[str, Any]:
+        """将 Document 转换为上下文字典"""
+        return {
+            'text': doc.page_content,
+            'start_time': doc.metadata.get('start_time', 0),
+            'end_time': doc.metadata.get('end_time', 0),
+            'timestamp': doc.metadata.get('timestamp', ''),
+            'score': float(score)
+        }
 
+    def _dedup_contexts(self, contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """按时间戳和文本去重"""
+        seen = set()
+        unique_contexts = []
+        for ctx in contexts:
+            key = (ctx.get('start_time'), ctx.get('timestamp'), ctx.get('text'))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_contexts.append(ctx)
+        return sorted(unique_contexts, key=lambda c: c.get('score', 0), reverse=True)
+
+    def _keyword_search(self, query: str, top_k: int) -> List[Document]:
+        """简单关键词检索，作为语义检索补充"""
+        if self.vectorstore is None or not hasattr(self.vectorstore, "docstore"):
+            return []
+        tokens = {tok.lower() for tok in query.split() if tok}
+        scored_docs = []
+        try:
+            for doc in self.vectorstore.docstore._dict.values():
+                content = doc.page_content.lower()
+                overlap = sum(1 for tok in tokens if tok in content)
+                if overlap:
+                    scored_docs.append((doc, overlap))
+        except Exception as e:
+            self.logger.debug("关键词检索失败: %s", e, exc_info=True)
+            return []
+        scored_docs.sort(key=lambda item: item[1], reverse=True)
+        return [doc for doc, _ in scored_docs[:top_k]]
+
+    def _retrieve_by_time_window(
+        self,
+        timestamp: float,
+        window: int,
+        limit: int
+    ) -> List[Dict[str, Any]]:
+        """基于时间窗口的简单检索"""
+        if self.vectorstore is None or not hasattr(self.vectorstore, "docstore"):
+            return []
+        candidates: List[Document] = []
+        try:
+            for doc in self.vectorstore.docstore._dict.values():
+                start_time = doc.metadata.get('start_time', 0)
+                if abs(start_time - timestamp) <= window:
+                    candidates.append(doc)
+        except Exception as e:
+            self.logger.debug("时间窗口检索失败: %s", e, exc_info=True)
+            return []
+        candidates.sort(key=lambda d: d.metadata.get('start_time', 0))
+        contexts = [self._doc_to_context(doc, score=0.0) for doc in candidates]
+        return contexts[:limit]
