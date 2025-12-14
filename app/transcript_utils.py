@@ -1,7 +1,8 @@
 import whisper
 from typing import List, Dict
-from singleton_class import Singleton
+from core import Singleton
 from summa.summarizer import summarize
+import streamlit as st
 
 class WhisperModel(Singleton):
     model = None
@@ -12,17 +13,27 @@ class WhisperModel(Singleton):
     @classmethod
     def load_model(cls):
         if cls.model is None:
-            cls.model = whisper.load_model("base")
+            try:
+                cls.model = _get_cached_model()
+            except Exception as load_error:
+                raise RuntimeError(
+                    "Whisper 模型加载失败，请确认已安装依赖并有可用的运行环境。"
+                ) from load_error
 
     @classmethod
     def transcribe(cls, video_path: str) -> List[Dict]:
         """
         Transcribe video and return list of segments with start, end, and text.
         """
+        if cls.model is None:
+            cls.load_model()
         result = cls.model.transcribe(video_path)
         return result['segments']
 
-WhisperModel.load_model()
+@st.cache_resource
+def _get_cached_model():
+    """Cache Whisper model to avoid repeated heavy loads."""
+    return whisper.load_model("base")
 
 def get_transcript_around(segments: List[Dict], timestamp: float, window: int = 60) -> str:
     """

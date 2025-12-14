@@ -18,3 +18,4 @@ faiss-cpu
 sentence-transformers
 ollama
 langchain-text-splitters
+langchain-huggingface

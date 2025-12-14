@@ -1,8 +1,9 @@
 import os
+from pathlib import Path
 from typing import List, Dict, Optional
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+
 from langchain_core.documents import Document
 import streamlit as st
 from config import VIDEO_PATH, FRAME_DIR
@@ -11,15 +12,12 @@ from config import VIDEO_PATH, FRAME_DIR
 class VideoRAGSystem:
     """基于LangChain的视频RAG系统"""
     
-    def __init__(self, embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"):
+    def __init__(self, embedding_model):
         """
         初始化RAG系统
-        :param embedding_model: 用于向量化的模型名称
+        :param embedding_model: 用于向量化的模型实例
         """
-        self.embedding_model = HuggingFaceEmbeddings(
-            model_name=embedding_model,
-            model_kwargs={'device': 'cpu'}
-        )
+        self.embedding_model = embedding_model
         self.vectorstore: Optional[FAISS] = None
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=500,  # 每个chunk的字符数
@@ -51,9 +49,19 @@ class VideoRAGSystem:
     def build_vector_store(self, segments: List[Dict], video_id: str = None):
         """
         构建向量存储
-        :param segments: Whisper转录片段
-        :param video_id: 视频ID，用于多视频场景
+        
+        Args:
+            segments: Whisper转录片段
+            video_id: 视频ID，用于多视频场景
+        
+        Raises:
+            ValueError: 如果segments为空
         """
+        from pathlib import Path
+        
+        if not segments:
+            raise ValueError("无法构建向量索引：转录片段为空")
+        
         # 转换为Document对象
         documents = self.create_documents_from_segments(segments)
         
@@ -64,20 +72,35 @@ class VideoRAGSystem:
         # 分割长文档
         split_docs = self.text_splitter.split_documents(merged_docs)
         
+        if not split_docs:
+            raise ValueError("无法构建向量索引：文档分割后为空")
+        
         # 构建FAISS向量存储
         self.vectorstore = FAISS.from_documents(
             documents=split_docs,
             embedding=self.embedding_model
         )
         
-        # 保存索引（可选）
+        # 保存索引
         if video_id:
             index_path = f"{self.index_path}_{video_id}"
         else:
             index_path = self.index_path
-        os.makedirs(os.path.dirname(index_path), exist_ok=True)
-        self.vectorstore.save_local(index_path)
-        st.success(f"✅ 向量索引已构建并保存到 {index_path}")
+        
+        # 确保目录存在
+        index_dir = Path(index_path)
+        index_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 保存索引
+        self.vectorstore.save_local(str(index_path))
+        
+        # 验证保存是否成功
+        faiss_file = index_dir / "index.faiss"
+        pkl_file = index_dir / "index.pkl"
+        if faiss_file.exists() and pkl_file.exists():
+            st.success(f"✅ 向量索引已构建并保存到 {index_path}")
+        else:
+            st.warning(f"⚠️ 向量索引构建完成，但保存验证失败: {index_path}")
     
     def _merge_short_segments(self, documents: List[Document], min_length: int = 50) -> List[Document]:
         """合并过短的片段"""
@@ -99,19 +122,47 @@ class VideoRAGSystem:
         return merged
     
     def load_vector_store(self, video_id: str = None):
-        """加载已保存的向量存储"""
+        """
+        加载已保存的向量存储
+        
+        Args:
+            video_id: 视频ID，用于多视频场景
+        
+        Returns:
+            bool: 是否成功加载
+        """
+        from pathlib import Path
+        
+        # 确定索引路径
+        if video_id:
+            index_path = f"{self.index_path}_{video_id}"
+        else:
+            index_path = self.index_path
+        
+        # 检查索引文件是否存在
+        index_dir = Path(index_path)
+        faiss_file = index_dir / "index.faiss"
+        pkl_file = index_dir / "index.pkl"
+        
+        if not index_dir.exists():
+            return False
+        
+        if not faiss_file.exists() or not pkl_file.exists():
+            # 索引文件不完整，返回False以便重新构建
+            return False
+        
         try:
-            if video_id:
-                index_path = f"{self.index_path}_{video_id}"
-            else:
-                index_path = self.index_path
             self.vectorstore = FAISS.load_local(
-                index_path,
+                str(index_path),
                 self.embedding_model,
                 allow_dangerous_deserialization=True
             )
             return True
+        except FileNotFoundError:
+            # 文件不存在，这是正常情况，不需要警告
+            return False
         except Exception as e:
+            # 其他错误（如文件损坏），记录警告
             st.warning(f"⚠️ 无法加载向量索引: {e}")
             return False
     
@@ -192,5 +243,49 @@ class VideoRAGSystem:
             'contexts': [],
             'retrieval_type': 'temporal_only'
         }
-
+    
+    def cleanup_invalid_indices(self, keep_signatures: List[str] = None):
+        """
+        清理无效或过期的索引文件
+        
+        Args:
+            keep_signatures: 要保留的视频签名列表（可选）
+        """
+        base_path = Path(self.index_path).parent
+        pattern = "faiss_index*"
+        
+        cleaned_count = 0
+        for index_dir in base_path.glob(pattern):
+            if not index_dir.is_dir():
+                continue
+            
+            # 检查索引文件是否完整
+            faiss_file = index_dir / "index.faiss"
+            pkl_file = index_dir / "index.pkl"
+            
+            # 如果文件不完整，删除目录
+            if not faiss_file.exists() or not pkl_file.exists():
+                try:
+                    import shutil
+                    shutil.rmtree(index_dir)
+                    cleaned_count += 1
+                except Exception as e:
+                    st.warning(f"⚠️ 无法删除无效索引 {index_dir}: {e}")
+            
+            # 如果指定了要保留的签名，检查是否应该删除
+            elif keep_signatures:
+                # 从目录名提取签名
+                dir_name = index_dir.name
+                if dir_name.startswith("faiss_index_"):
+                    signature = dir_name.replace("faiss_index_", "")
+                    if signature not in keep_signatures:
+                        try:
+                            import shutil
+                            shutil.rmtree(index_dir)
+                            cleaned_count += 1
+                        except Exception as e:
+                            st.warning(f"⚠️ 无法删除过期索引 {index_dir}: {e}")
+        
+        if cleaned_count > 0:
+            st.info(f"🧹 已清理 {cleaned_count} 个无效索引")
 

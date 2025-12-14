@@ -22,8 +22,17 @@ def extract_frames_around(video_path: Path, timestamp: float, frame_dir: Path, w
         fps: Frames per second to sample
 
     Returns:
-        List of saved frame paths
+        List of saved frame paths (may be shorter if frames are missing)
     """
+    os.makedirs(frame_dir, exist_ok=True)
+    # Remove old QA frames but keep summary frames
+    for file in os.listdir(frame_dir):
+        if file.startswith("frame_"):
+            try:
+                os.remove(os.path.join(frame_dir, file))
+            except OSError:
+                pass
+
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError("Could not open video")
@@ -48,7 +57,9 @@ def extract_frames_around(video_path: Path, timestamp: float, frame_dir: Path, w
         current += 1.0 / fps
 
     cap.release()
-    return [frame_paths[4]]
+    if not frame_paths:
+        raise RuntimeError("No frames could be extracted around the given timestamp")
+    return frame_paths
 
 def extract_key_frames_for_summary(video_path: Path, frame_dir: Path, num_frames: int = 5) -> List[Path]:
     """
@@ -93,4 +104,3 @@ def extract_key_frames_for_summary(video_path: Path, frame_dir: Path, num_frames
     
     cap.release()
     return frame_paths
-

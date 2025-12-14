@@ -104,10 +104,109 @@ def filter_promotional_content(text: str) -> str:
     return filtered_text.strip()
 
 
+from langchain_huggingface import HuggingFaceEmbeddings
+
+
 @st.cache_resource
+def get_embedding_model():
+    """获取并缓存Embedding模型"""
+    import os
+    
+    # 设置 HuggingFace 镜像源（解决401错误）
+    # 如果环境变量未设置，使用国内镜像源
+    if not os.getenv("HF_ENDPOINT"):
+        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+    
+    # 如果设置了 HF_TOKEN，使用它
+    hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    
+    try:
+        # 尝试加载模型
+        embedding_model = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={'device': 'cpu'}
+        )
+        return embedding_model
+    except Exception as e:
+        error_str = str(e)
+        # 如果是401错误，尝试其他方法
+        if "401" in error_str or "Unauthorized" in error_str:
+            st.warning("⚠️ 模型下载遇到认证问题，尝试其他方法...")
+            # 方法1: 尝试使用不同的镜像源
+            try:
+                os.environ["HF_ENDPOINT"] = "https://huggingface.co"
+                embedding_model = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2",
+                    model_kwargs={'device': 'cpu'}
+                )
+                return embedding_model
+            except Exception as e2:
+                # 方法2: 如果仍然失败，提示用户设置token或使用本地模型
+                st.error(
+                    f"❌ 无法下载模型: {e2}\n\n"
+                    "解决方案：\n"
+                    "1. 设置 HuggingFace token: export HF_TOKEN=your_token\n"
+                    "2. 或者使用本地已下载的模型\n"
+                    "3. 检查网络连接"
+                )
+                raise
+        else:
+            # 其他错误直接抛出
+            raise
+
+
 def get_rag_system():
-    """获取RAG系统实例（缓存）"""
-    return VideoRAGSystem()
+    """获取RAG系统实例"""
+    # 不再缓存整个RAG系统，因为vectorstore是状态相关的
+    embedding_model = get_embedding_model()
+    return VideoRAGSystem(embedding_model)
+
+
+def contextualize_query(query: str, history: List[Dict]) -> str:
+    """
+    根据对话历史重写查询，使其独立化
+    :param query: 当前用户的查询
+    :param history: 对话历史 [{"role": "user", "content": "..."}, ...]
+    :return: 重写后的独立查询
+    """
+    if not history:
+        return query
+        
+    if ollama is None:
+        return query
+
+    # 构建重写提示词
+    conversation_str = ""
+    for msg in history[-4:]:  # 只看最近几轮
+        role = msg.get("role")
+        content = msg.get("content")
+        conversation_str += f"{role}: {content}\n"
+    
+    prompt = f"""Given a chat history and the latest user question which might reference context in the chat history, formulate a standalone question which can be understood without the chat history. Do NOT answer the question, just reformulate it if needed and otherwise return it as is.
+
+Chat History:
+{conversation_str}
+
+User Question: {query}
+
+Standalone Question:"""
+
+    try:
+        response = call_ollama_with_retry(
+            ollama.generate,
+            model=MODEL,
+            prompt=prompt,
+            options={"num_predict": 100}
+        )
+        rewritten_query = response["response"].strip()
+        # 简单的验证：如果返回太长或者是废话，回退到原问题
+        if len(rewritten_query) > len(query) * 2 and len(query) > 10:
+             return query
+        st.write(f"DEBUG: Rewritten query: {rewritten_query}") 
+        return rewritten_query
+    except Exception as e:
+        print(f"Query rewriting failed: {e}")
+        return query
 
 
 def check_ollama_connection(max_retries=2, retry_delay=1):
@@ -188,7 +287,7 @@ def call_ollama_with_retry(func, *args, max_retries=3, retry_delay=2, **kwargs):
 
 
 def get_response(text, question, full_transcript, prompt_key, summarized_transcript, 
-                 segments=None, use_rag=True):
+                 segments=None, use_rag=True, frame_paths=None):
     """
     获取LLM响应，支持RAG增强
     :param text: 局部转录文本
@@ -198,6 +297,7 @@ def get_response(text, question, full_transcript, prompt_key, summarized_transcr
     :param summarized_transcript: 摘要转录
     :param segments: Whisper片段（用于RAG）
     :param use_rag: 是否使用RAG
+    :param frame_paths: 本次调用需要附带的帧路径（None时回退到读取目录下的所有jpg）
     """
     # 检查 ollama 是否可用
     if ollama is None:
@@ -223,21 +323,43 @@ def get_response(text, question, full_transcript, prompt_key, summarized_transcr
             st.session_state[connection_check_key] = True
 
     prompt = prompt_dict[prompt_key]
-    
+
+    # 准备对话历史用于查询重写
+    history_messages = []
+    if "qa_conversation_history" in st.session_state and st.session_state.qa_conversation_history:
+        for item in st.session_state.qa_conversation_history[-6:]:
+            if item.get("question"):
+                history_messages.append({"role": "user", "content": item.get("question")})
+            if item.get("answer"):
+                history_messages.append({"role": "assistant", "content": item.get("answer")})
+    elif "conversation" in st.session_state and st.session_state.conversation:
+        # 兼容旧格式
+        for q, a in st.session_state.conversation[-6:]:
+            if q: history_messages.append({"role": "user", "content": q})
+            if a: history_messages.append({"role": "assistant", "content": a})
+
     # RAG检索相关上下文
     retrieved_contexts = []
     if use_rag and question and segments:
         try:
-            rag_system = get_rag_system()
+            # 尝试从session_state获取rag_system，避免每次重新创建
+            if "rag_system" not in st.session_state:
+                st.session_state.rag_system = get_rag_system()
+            rag_system = st.session_state.rag_system
             
             # 如果向量存储不存在，构建它
             if rag_system.vectorstore is None:
                 with st.spinner("🔍 构建向量索引..."):
                     rag_system.build_vector_store(segments)
             
+            # 多轮对话查询重写
+            search_query = question
+            if history_messages:
+                search_query = contextualize_query(question, history_messages)
+            
             # 检索相关上下文
             retrieved_contexts = rag_system.retrieve_relevant_context(
-                question, 
+                search_query, 
                 top_k=3
             )
         except Exception as e:
@@ -245,9 +367,13 @@ def get_response(text, question, full_transcript, prompt_key, summarized_transcr
             retrieved_contexts = []
 
     prompt_inputs = []
-    for path in os.listdir(FRAME_DIR):
-        if path.endswith(".jpg"):
-            image_path = os.path.join(FRAME_DIR, path)
+    image_sources = frame_paths if frame_paths is not None else [
+        os.path.join(FRAME_DIR, path)
+        for path in os.listdir(FRAME_DIR)
+        if path.endswith(".jpg")
+    ]
+    for image_path in image_sources:
+        if os.path.exists(image_path):
             prompt_inputs.append(image_to_base64(image_path))
 
     # 构建增强的上下文（如果使用RAG）
@@ -290,16 +416,24 @@ def get_response(text, question, full_transcript, prompt_key, summarized_transcr
     # Build multi-turn messages from session conversation when available
     messages = []
     try:
-        if "conversation" in st.session_state and st.session_state.conversation:
+        conversation_pairs = []
+        if "qa_conversation_history" in st.session_state and st.session_state.qa_conversation_history:
+            for item in st.session_state.qa_conversation_history[-6:]:
+                conversation_pairs.append((item.get("question", ""), item.get("answer", "")))
+        elif "conversation" in st.session_state and st.session_state.conversation:
+            conversation_pairs = st.session_state.conversation[-6:]
+
+        if conversation_pairs:
             # Provide system guidance for consistent behavior
             messages.append({
                 "role": "system",
                 "content": "You are a helpful teaching assistant. Answer concisely and factually using provided video context. Do NOT include any promotional content, subscription links, newsletter mentions, website URLs (such as blog.bybigo.com), or advertising in your responses. Only provide answers based on the video content."
             })
-            # Inject prior turns
-            for (prev_q, prev_a) in st.session_state.conversation[-6:]:  # limit context window
-                messages.append({"role": "user", "content": prev_q})
-                messages.append({"role": "assistant", "content": prev_a})
+            for (prev_q, prev_a) in conversation_pairs:
+                if prev_q:
+                    messages.append({"role": "user", "content": prev_q})
+                if prev_a:
+                    messages.append({"role": "assistant", "content": prev_a})
         # Current turn prompt with images
         messages.append({"role": "user", "content": prompt, 'images': prompt_inputs})
     except Exception:
