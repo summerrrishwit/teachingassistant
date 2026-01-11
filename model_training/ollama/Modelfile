@@ -1,0 +1,25 @@
+
+# 假设我们已经将微调后的模型转换并量化为 GGUF 格式 (例如 teachingassistant-7b-q4_0.gguf)
+# 使用方法: ollama create teachingassistant -f Modelfile
+
+FROM ./teachingassistant-7b.gguf
+
+# 设置参数
+PARAMETER temperature 0.3
+PARAMETER top_p 0.9
+PARAMETER stop "<|endoftext|>"
+PARAMETER stop "<|im_end|>"
+
+# 设置系统提示词与聊天模板 (适配 Alpaca/Llama2 风格)
+TEMPLATE """
+{{- if .System }}
+system
+{{ .System }}
+{{- end }}
+user
+{{ .Prompt }}
+assistant
+"""
+SYSTEM """
+You are a knowledgeable and helpful teaching assistant. Answer questions clearly and accurately.
+"""

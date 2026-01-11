@@ -1,0 +1,13 @@
+
+torch>=2.1.0
+transformers>=4.40.0
+datasets>=2.18.0
+peft>=0.10.0
+bitsandbytes>=0.43.0
+trl>=0.8.0
+scipy
+sentencepiece
+openai>=1.0.0
+ollama>=0.1.6
+vllm>=0.4.0; sys_platform == "linux" 
+# Note: vLLM is primarily for Linux. For Mac, see docs for build instructions or use Ollama.

@@ -1,0 +1,22 @@
+streamlit
+openai-whisper
+opencv-python
+numpy
+Pillow
+torch
+torchaudio
+ffmpeg-python
+transformers
+yt-dlp
+matplotlib
+torchvision
+summa
+langchain
+langchain-core
+langchain-community
+faiss-cpu
+sentence-transformers
+ollama  # 已禁用，改用 vLLM
+vllm>=0.6.0  # vLLM 推理加速（支持 Flash Attention）
+langchain-text-splitters
+langchain-huggingface
