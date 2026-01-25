@@ -1,6 +1,6 @@
 
 import os
-from app.config import FRAME_DIR, MODEL  # VLLM_MODEL_PATH, VLLM_CONFIG  # VLLM配置已注释，改用Ollama
+from app.config import FRAME_DIR, MODEL  # 启用 vLLM 时请同时导入 VLLM_MODEL_PATH, VLLM_CONFIG
 from app.prompts import prompt_dict
 import base64
 
@@ -20,7 +20,6 @@ except Exception as ollama_import_error:
 # vLLM 相关代码已注释，改用 Ollama
 # ============================================================================
 # try:
-#     from langchain_community.llms import VLLM
 #     from vllm import LLM, SamplingParams
 #     VLLM_AVAILABLE = True
 # except Exception as vllm_import_error:
@@ -166,6 +165,7 @@ def check_ollama_connection():
 #     - tensor_parallel_size 建议设为 GPU 数量（例如 torch.cuda.device_count()）
 #     - 单卡时保持 1，多卡时按需调整 max_model_len / max_num_seqs
 #     - 多卡下每卡的 gpu_memory_utilization 需更保守，避免 profile_run OOM
+#     - 多模态模型需要更多显存处理图像输入，建议先用小分辨率图像验证
 #     """
 #     if not VLLM_AVAILABLE:
 #         raise RuntimeError(
@@ -188,9 +188,8 @@ def check_ollama_connection():
 #         
 #         # 设置 PyTorch CUDA 内存分配器配置（避免内存碎片）
 #         # 这有助于减少 OOM 错误，特别是在处理多模态输入时
-#         # 注意：使用新的环境变量名 PYTORCH_ALLOC_CONF（PYTORCH_CUDA_ALLOC_CONF 已弃用）
-#         if not os.getenv("PYTORCH_ALLOC_CONF") and not os.getenv("PYTORCH_CUDA_ALLOC_CONF"):
-#             os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+#         if not os.getenv("PYTORCH_CUDA_ALLOC_CONF"):
+#             os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 #         
 #         # 设置 HuggingFace 镜像源（解决网络访问问题）
 #         # 如果环境变量未设置，使用国内镜像源
@@ -205,6 +204,11 @@ def check_ollama_connection():
 #         
 #         # 从配置获取模型路径和参数
 #         model_path = VLLM_MODEL_PATH
+#         if not model_path:
+#             raise RuntimeError("未设置 VLLM_MODEL_PATH，请在 app/config.py 中配置")
+#         if os.path.sep in model_path and not os.path.exists(model_path):
+#             raise RuntimeError(f"本地模型路径不存在: {model_path}")
+#
 #         config = VLLM_CONFIG.copy()
 #         
 #         # 多卡场景建议（可选）
@@ -219,7 +223,7 @@ def check_ollama_connection():
 #                 f"HuggingFace 镜像: {os.getenv('HF_ENDPOINT', '默认')}")
 #         
 #         # 创建 vLLM 实例
-#         llm = VLLM(
+#         llm = LLM(
 #             model=model_path,
 #             trust_remote_code=True,
 #             **config
@@ -251,7 +255,7 @@ def check_ollama_connection():
 #             solutions.append("   - 降低 gpu_memory_utilization（如 0.40 或 0.50）")
 #             solutions.append("   - 检查是否有其他进程占用 GPU 显存：`nvidia-smi`")
 #             solutions.append("   - 清理 GPU 显存：`kill -9 <占用显存的进程PID>`")
-#             solutions.append("   - 已设置 PYTORCH_ALLOC_CONF=expandable_segments:True 来减少内存碎片")
+#             solutions.append("   - 已设置 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True 来减少内存碎片")
 #         
 #         if not solutions:
 #             solutions.append("1. 检查模型路径是否正确")

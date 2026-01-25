@@ -44,12 +44,9 @@ brew install ffmpeg
 
 3. **配置模型（可选）**
 
-模型会在首次使用时自动下载。如果需要手动下载：
+模型会在首次使用时自动下载。
 
 ```bash
-# 使用下载脚本
-python download_model.py
-
 # 或使用环境变量设置模型路径
 export VLLM_MODEL_PATH="/path/to/local/model"
 ```
@@ -73,12 +70,6 @@ export PYTHONPATH=/root/autodl-tmp:$PYTHONPATH
 
 # 运行 Streamlit 应用
 streamlit run app/main.py
-```
-
-**方式 3：直接运行**
-
-```bash
-python -m streamlit run app/main.py
 ```
 
 ## 📂 项目结构
@@ -126,16 +117,6 @@ runtime/                     # 运行时文件
 - **模型层** (`models/`): 数据模型定义
 - **样式层** (`styles/`): UI样式定义
 
-### 导入方式
-
-项目统一使用绝对导入：
-
-```python
-from app.config import VIDEO_PATH, FRAME_DIR
-from app.services.vector_service import clear_vector_index_state
-from app.utils.timestamp import parse_timestamp
-from app.styles.css import MAIN_CSS
-```
 
 ## 🛠️ 技术栈
 
@@ -362,13 +343,6 @@ export HF_TOKEN=your_token_here
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！
-
-### 贡献者
-
-感谢以下贡献者：
-
-- [@summerrrishwit](https://github.com/summerrrishwit) - Rongzhi Xia
-
 
 ## 🔗 相关链接
 

@@ -518,11 +518,6 @@ export VLLM_MODEL_PATH="Qwen/Qwen2.5-VL-7B-Instruct"
 # 或使用本地路径
 export VLLM_MODEL_PATH="/root/models/Qwen2.5-VL-7B-Instruct"
 
-# 设置 HuggingFace 镜像源（可选）
-export HF_ENDPOINT=https://hf-mirror.com
-
-# 运行应用
-streamlit run app/main.py
 ```
 
 ---
